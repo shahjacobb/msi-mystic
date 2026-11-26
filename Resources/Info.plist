@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Mystic</string>
+    <string>MSI Mystic</string>
     <key>CFBundleDisplayName</key>
-    <string>Mystic</string>
+    <string>MSI Mystic</string>
     <key>CFBundleIdentifier</key>
-    <string>com.shahbhuiyan.mystic</string>
+    <string>com.shahbhuiyan.msi-mystic</string>
     <key>CFBundleExecutable</key>
-    <string>Mystic</string>
+    <string>MSIMystic</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>

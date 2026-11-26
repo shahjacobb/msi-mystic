@@ -49,7 +49,7 @@ struct ContentView: View {
             Button("Allow") { light.allowWrites() }
             Button("Cancel", role: .cancel) { light.declineWrites() }
         } message: {
-            Text("\(light.monitor.name) hasn't been tested with Mystic yet. Its current lighting is saved, so Restore Original Lighting can put it back.")
+            Text("\(light.monitor.name) hasn't been tested with MSI Mystic yet. Its current lighting is saved, so Restore Original Lighting can put it back.")
         }
     }
 

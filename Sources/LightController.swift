@@ -142,7 +142,7 @@ struct Selection: Codable {
 enum OriginalLighting {
     private static var folder: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Mystic", isDirectory: true)
+        return base.appendingPathComponent("MSI Mystic", isDirectory: true)
     }
 
     private static func file(model: String, serial: String?) -> URL {
