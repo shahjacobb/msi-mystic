@@ -50,7 +50,7 @@ check(LightingLayout.compact.allLEDOffsets.last! + 2 < LightingLayout.compact.si
 check(LightingLayout.extended.allLEDOffsets.last! + 2 < LightingLayout.extended.size, "extended layout fits its 168-byte report")
 
 // Swatches must survive the hue/saturation/value round trip, or a dark swatch like
-// Qatar Burgundy gets sent at full intensity and never shows as selected.
+// Burgundy gets sent at full intensity and never shows as selected.
 let roundTrips = Swatch.all.allSatisfy { s in
     let hsv = HSV(r: s.red, g: s.green, b: s.blue)
     let rgb = HSV(h: hsv.h, s: hsv.s, v: hsv.v).rgb

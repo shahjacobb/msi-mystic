@@ -65,12 +65,12 @@ struct Swatch: Identifiable, Hashable {
     }
 
     static let all: [Swatch] = [
-        Swatch("Qatar Burgundy", 150, 0, 55),
-        Swatch("Singapore Orange", 255, 110, 0),
-        Swatch("Royal Purple", 110, 0, 255),
+        Swatch("Burgundy", 150, 0, 55),
+        Swatch("Orange", 255, 110, 0),
+        Swatch("Violet", 110, 0, 255),
         Swatch("Magenta", 255, 0, 150),
-        Swatch("Lagoon", 0, 200, 170),
-        Swatch("Glacier", 170, 215, 255),
+        Swatch("Teal", 0, 200, 170),
+        Swatch("Ice", 170, 215, 255),
     ]
 }
 
@@ -196,7 +196,7 @@ final class LightController: ObservableObject {
         }
     }
     /// The chosen color as hue, saturation and value. Value is the color's own depth
-    /// (Qatar Burgundy is a dark color); `level` is the brightness slider on top of it.
+    /// (Burgundy is a dark color); `level` is the brightness slider on top of it.
     @Published var hue: Double = 0.072 { didSet { apply(); saveSelection() } }
     @Published var saturation: Double = 1 { didSet { apply(); saveSelection() } }
     @Published var value: Double = 1 { didSet { apply(); saveSelection() } }
