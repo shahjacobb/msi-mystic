@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>MSI Light</string>
+    <string>Lume</string>
     <key>CFBundleDisplayName</key>
-    <string>MSI Light</string>
+    <string>Lume</string>
     <key>CFBundleIdentifier</key>
-    <string>com.shahbhuiyan.msilight</string>
+    <string>com.shahbhuiyan.lume</string>
     <key>CFBundleExecutable</key>
-    <string>MSILight</string>
+    <string>Lume</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>

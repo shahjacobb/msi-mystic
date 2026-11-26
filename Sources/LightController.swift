@@ -4,22 +4,11 @@ enum LightMode: String, CaseIterable, Identifiable {
     case solid = "Solid"
     case breathe = "Breathe"
     case flash = "Flash"
+    case ambient = "Ambient"
     case rainbow = "Rainbow"
-    case spectrum = "Spectrum"
     case scenes = "Scenes"
 
     var id: Self { self }
-
-    var symbol: String {
-        switch self {
-        case .solid: "circle.fill"
-        case .breathe: "wind"
-        case .flash: "bolt.fill"
-        case .rainbow: "rainbow"
-        case .spectrum: "sparkles"
-        case .scenes: "square.stack.3d.up.fill"
-        }
-    }
 
     /// Mode byte understood by the monitor. Scenes is driven by the app as a sequence of solid colors.
     var hardwareMode: UInt8 {
@@ -27,22 +16,23 @@ enum LightMode: String, CaseIterable, Identifiable {
         case .solid, .scenes: 0x01
         case .breathe: 0x02
         case .flash: 0x05
+        case .ambient: 0x21
         case .rainbow: 0x1A
-        case .spectrum: 0x21
         }
     }
 
     var usesColor: Bool { self == .solid || self == .breathe || self == .flash }
-    var usesSpeed: Bool { self == .breathe || self == .flash || self == .rainbow || self == .spectrum }
+    var usesSpeed: Bool { self == .breathe || self == .flash || self == .ambient || self == .rainbow }
     var isAnimated: Bool { self != .solid && self != .scenes }
+    var isSpectrum: Bool { self == .ambient || self == .rainbow }
 
     init?(hardwareMode: UInt8) {
         switch hardwareMode {
         case 0x01: self = .solid
         case 0x02: self = .breathe
         case 0x05: self = .flash
+        case 0x21: self = .ambient
         case 0x1A: self = .rainbow
-        case 0x21: self = .spectrum
         default: return nil
         }
     }
@@ -116,12 +106,10 @@ final class LightController: ObservableObject {
     }
 
     var title: String {
+        guard connected else { return "No Monitor" }
         guard power else { return "Off" }
-        switch mode {
-        case .rainbow: return "Rainbow"
-        case .spectrum: return "Spectrum"
-        default: return activeSwatch?.name ?? hex
-        }
+        if mode.isSpectrum { return mode.rawValue }
+        return activeSwatch?.name ?? "Custom"
     }
 
     var hex: String {
