@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>MSI Monitor Lighting</string>
+    <string>Mystic</string>
     <key>CFBundleDisplayName</key>
-    <string>MSI Monitor Lighting</string>
+    <string>Mystic</string>
     <key>CFBundleIdentifier</key>
-    <string>com.shahbhuiyan.msi-monitor-lighting</string>
+    <string>com.shahbhuiyan.mystic</string>
     <key>CFBundleExecutable</key>
-    <string>MSIMonitorLighting</string>
+    <string>Mystic</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>

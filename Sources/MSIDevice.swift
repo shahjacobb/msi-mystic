@@ -1,34 +1,31 @@
 import Foundation
 import IOKit.hid
 
+/// The two Mystic Light packet formats MSI monitors use, as documented by msigd.
+struct LightingLayout: Equatable {
+    let reportID: UInt8
+    let size: Int
+    let ledsPerGroup: Int
+
+    /// MPG273CQR, MAG274 series, MPG 274URDFW and newer.
+    static let extended = LightingLayout(reportID: 0x72, size: 168, ledsPerGroup: 24)
+    /// MAG241C/271C/272C/321C series.
+    static let compact = LightingLayout(reportID: 0x71, size: 78, ledsPerGroup: 9)
+
+    static let all = [extended, compact]
+
+    /// Byte offset of every LED's RGB triplet, both groups.
+    var allLEDOffsets: [Int] { (0..<(2 * ledsPerGroup)).map { 23 + $0 * 3 } }
+}
+
 /// Talks to the Mystic Light controller in an MSI monitor over USB HID.
 ///
-/// The only thing this type can send is feature report 0x72: a 168-byte packet
-/// built from the monitor's factory template. Writes are coalesced so a fast
-/// drag on the color wheel produces at most ~8 packets per second.
+/// The only thing this type writes is the monitor's lighting feature report (0x72 or 0x71),
+/// always built on top of a reference packet that came from the monitor itself.
+/// Writes are coalesced so a fast drag produces at most ~8 packets per second.
 final class MSIDevice {
     static let vendorID = 0x1462
     static let productID = 0x3FA4
-
-    static let reportID: UInt8 = 0x72
-    static let reportSize = 168
-
-    /// Byte offsets of the RGB triplet for every physical LED.
-    /// One LED in group 0, twenty-two in group 1.
-    static let ledOffsets: [Int] = [23] + Array(stride(from: 95, through: 158, by: 3))
-
-    /// The packet this monitor shipped with: MSI's ambient effect (0x21), red, brightness 80.
-    static let factory: [UInt8] = {
-        var p = [UInt8](repeating: 0, count: reportSize)
-        p[0] = reportID
-        let header: [UInt8] = [0x21, 0xFF, 0x00, 0x00, 0x00, 0x50, 0x00, 0xFF, 0x00, 0x80, 0x00]
-        for group in 0..<2 {
-            for (i, byte) in header.enumerated() { p[1 + 11 * group + i] = byte }
-        }
-        for offset in ledOffsets { p[offset] = 0xFF }
-        p[167] = 0x82
-        return p
-    }()
 
     struct State {
         var mode: UInt8
@@ -39,6 +36,14 @@ final class MSIDevice {
 
     var onConnectionChange: ((Bool) -> Void)?
     private(set) var productName: String?
+    private(set) var serialNumber: String?
+    private(set) var layout: LightingLayout?
+
+    /// Packet every write starts from. Bytes the app doesn't control are copied from it unchanged.
+    var reference: [UInt8]? {
+        didSet { ledOffsets = Self.populatedLEDs(in: reference, layout: layout) }
+    }
+    private var ledOffsets: [Int] = []
 
     private let manager: IOHIDManager
     private var device: IOHIDDevice?
@@ -76,6 +81,9 @@ final class MSIDevice {
         guard IOHIDDeviceOpen(candidate, IOOptionBits(kIOHIDOptionsTypeNone)) == kIOReturnSuccess else { return }
         device = candidate
         productName = IOHIDDeviceGetProperty(candidate, kIOHIDProductKey as CFString) as? String
+        serialNumber = IOHIDDeviceGetProperty(candidate, kIOHIDSerialNumberKey as CFString) as? String
+        layout = LightingLayout.all.first { readRaw(using: $0) != nil }
+        reference = nil
         lastWritten = nil
         onConnectionChange?(true)
     }
@@ -83,31 +91,41 @@ final class MSIDevice {
     private func detach(_ removed: IOHIDDevice) {
         guard let current = device, current === removed else { return }
         device = nil
+        layout = nil
+        reference = nil
         pending = nil
         onConnectionChange?(false)
     }
 
     // MARK: Reading
 
-    func readState() -> State? {
+    func readRaw() -> [UInt8]? {
+        layout.flatMap(readRaw(using:))
+    }
+
+    private func readRaw(using layout: LightingLayout) -> [UInt8]? {
         guard let device else { return nil }
-        var buffer = [UInt8](repeating: 0, count: Self.reportSize)
-        buffer[0] = Self.reportID
-        var length = CFIndex(Self.reportSize)
-        let result = IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, CFIndex(Self.reportID), &buffer, &length)
-        guard result == kIOReturnSuccess, length == Self.reportSize, buffer[0] == Self.reportID else { return nil }
-        return State(mode: buffer[1], red: buffer[2], green: buffer[3], blue: buffer[4],
-                     speed: buffer[5], brightness: buffer[6])
+        var buffer = [UInt8](repeating: 0, count: layout.size)
+        buffer[0] = layout.reportID
+        var length = CFIndex(layout.size)
+        let result = IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, CFIndex(layout.reportID), &buffer, &length)
+        guard result == kIOReturnSuccess, length == layout.size, buffer[0] == layout.reportID else { return nil }
+        return buffer
+    }
+
+    func readState() -> State? {
+        guard let p = readRaw() else { return nil }
+        return State(mode: p[1], red: p[2], green: p[3], blue: p[4], speed: p[5], brightness: p[6])
     }
 
     // MARK: Writing
 
     /// Queue a state. Only the most recent one is sent on the next tick.
     func send(_ state: State) {
-        pending = Self.packet(for: state)
+        pending = packet(for: state)
     }
 
-    /// Send immediately, bypassing the coalescing timer.
+    /// Send a complete packet immediately, bypassing the coalescing timer.
     func sendNow(_ packet: [UInt8]) {
         pending = nil
         write(packet)
@@ -120,16 +138,21 @@ final class MSIDevice {
     }
 
     private func write(_ packet: [UInt8]) {
-        guard let device, packet.count == Self.reportSize, packet[0] == Self.reportID else { return }
+        guard let device, let layout, packet.count == layout.size, packet[0] == layout.reportID else { return }
         let result = packet.withUnsafeBufferPointer { bytes in
-            IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, CFIndex(Self.reportID),
+            IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, CFIndex(layout.reportID),
                                  bytes.baseAddress!, bytes.count)
         }
         if result == kIOReturnSuccess { lastWritten = packet }
     }
 
-    static func packet(for state: State) -> [UInt8] {
-        var p = factory
+    func packet(for state: State) -> [UInt8]? {
+        guard let reference else { return nil }
+        return Self.packet(for: state, reference: reference, ledOffsets: ledOffsets)
+    }
+
+    static func packet(for state: State, reference: [UInt8], ledOffsets: [Int]) -> [UInt8] {
+        var p = reference
         for group in 0..<2 {
             let h = 1 + 11 * group
             p[h] = state.mode
@@ -145,5 +168,15 @@ final class MSIDevice {
             p[offset + 2] = state.blue
         }
         return p
+    }
+
+    /// LED slots that hold a color in the reference packet. Monitors leave unused slots at zero,
+    /// so this recovers the physical LED layout without a per-model table. If every slot is
+    /// zero (lighting was off), fall back to all slots, as msigd does.
+    static func populatedLEDs(in reference: [UInt8]?, layout: LightingLayout?) -> [Int] {
+        guard let reference, let layout else { return [] }
+        let all = layout.allLEDOffsets
+        let lit = all.filter { reference[$0] != 0 || reference[$0 + 1] != 0 || reference[$0 + 2] != 0 }
+        return lit.isEmpty ? all : lit
     }
 }

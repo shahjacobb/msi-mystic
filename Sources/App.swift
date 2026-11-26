@@ -2,12 +2,12 @@ import SwiftUI
 import AppKit
 
 @main
-struct MSIMonitorLightingApp: App {
+struct MysticApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var controller = LightController()
 
     var body: some Scene {
-        WindowGroup("MSI Monitor Lighting") {
+        WindowGroup("Mystic") {
             ContentView()
                 .environmentObject(controller)
                 .frame(width: 380, height: 780)

@@ -74,28 +74,101 @@ struct Swatch: Identifiable, Hashable {
     ]
 }
 
+/// What the app knows about a monitor model beyond what the monitor reports itself.
+/// Every field is optional polish: an unknown MSI monitor still works, it just gets
+/// the generic preview, asks before its first write, and restores to its first-seen state.
 struct MonitorModel {
     let name: String
-    let summary: String
-    let productPage: URL?
-    /// Base name of a rear photo plus LED mask in Resources, if one exists for this model.
-    let rearPhoto: String?
+    var productPage: URL? = nil
+    /// Resources base name of a rear product photo plus "-leds" mask, if one exists.
+    var rearPhoto: String? = nil
+    /// Lighting packet as shipped, if captured from a new unit.
+    var factory: [UInt8]? = nil
+    /// Lighting writes have been confirmed on real hardware.
+    var verified = false
 
     static func lookup(_ name: String) -> MonitorModel {
         switch name {
         case "MPG 274URDFW E16M":
-            return MonitorModel(name: name, summary: "27-inch 4K Mini LED",
+            return MonitorModel(name: name,
                                 productPage: URL(string: "https://www.msi.com/Monitor/MPG-274URDFW-E16M"),
-                                rearPhoto: "mpg274urdfw-rear")
+                                rearPhoto: "mpg274urdfw-rear",
+                                factory: mpg274urdfwFactory,
+                                verified: true)
         default:
-            return MonitorModel(name: name, summary: "MSI monitor", productPage: nil, rearPhoto: nil)
+            return MonitorModel(name: name)
         }
+    }
+
+    /// Read from a new MPG 274URDFW E16M: MSI's ambient effect (0x21), red, brightness 80,
+    /// one LED in group 0 and twenty-two in group 1.
+    private static let mpg274urdfwFactory: [UInt8] = {
+        var p = [UInt8](repeating: 0, count: 168)
+        p[0] = 0x72
+        let header: [UInt8] = [0x21, 0xFF, 0x00, 0x00, 0x00, 0x50, 0x00, 0xFF, 0x00, 0x80, 0x00]
+        for group in 0..<2 {
+            for (i, byte) in header.enumerated() { p[1 + 11 * group + i] = byte }
+        }
+        for offset in [23] + Array(stride(from: 95, through: 158, by: 3)) { p[offset] = 0xFF }
+        p[167] = 0x82
+        return p
+    }()
+}
+
+/// The user's choices for one monitor, kept across launches.
+struct Selection: Codable {
+    var hue: Double
+    var saturation: Double
+    var value: Double?
+    var level: Double?
+    var sceneInterval: Double
+    var colorMode: String
+    var spectrumMode: String
+    var inScenes: Bool
+
+    private static func key(_ monitor: String) -> String { "selection.\(monitor)" }
+
+    static func load(for monitor: String) -> Selection? {
+        UserDefaults.standard.data(forKey: key(monitor)).flatMap { try? JSONDecoder().decode(Selection.self, from: $0) }
+    }
+
+    func save(for monitor: String) {
+        if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: Self.key(monitor)) }
+    }
+}
+
+/// The first lighting packet seen from a monitor without known factory data, kept so
+/// "Restore" always returns it to how it was before this app touched it.
+enum OriginalLighting {
+    private static var folder: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("Mystic", isDirectory: true)
+    }
+
+    private static func file(model: String, serial: String?) -> URL {
+        let key = "\(model)-\(serial ?? "unknown")".replacingOccurrences(of: "/", with: "_")
+        return folder.appendingPathComponent(key + ".bin")
+    }
+
+    static func load(model: String, serial: String?) -> [UInt8]? {
+        (try? Data(contentsOf: file(model: model, serial: serial))).map { [UInt8]($0) }
+    }
+
+    static func save(_ packet: [UInt8], model: String, serial: String?) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try? Data(packet).write(to: file(model: model, serial: serial))
     }
 }
 
 final class LightController: ObservableObject {
     @Published private(set) var connected = false
+    @Published private(set) var lightingSupported = true
     @Published private(set) var monitor = MonitorModel.lookup("")
+    /// True while the app is waiting for permission to write to an untested model.
+    @Published var askingToWrite = false
+    private var writesAllowed = false
+
+    var hasFactoryData: Bool { monitor.factory != nil }
 
     @Published var power = true { didSet { restartScenes(); apply() } }
     @Published var mode: LightMode = .solid {
@@ -104,6 +177,7 @@ final class LightController: ObservableObject {
             if mode.category == .spectrum { lastSpectrumMode = mode }
             restartScenes()
             apply()
+            saveSelection()
         }
     }
 
@@ -121,11 +195,14 @@ final class LightController: ObservableObject {
             }
         }
     }
-    @Published var hue: Double = 0.072 { didSet { apply() } }
-    @Published var saturation: Double = 1 { didSet { apply() } }
-    @Published var level: Double = 1 { didSet { apply() } }
+    /// The chosen color as hue, saturation and value. Value is the color's own depth
+    /// (Qatar Burgundy is a dark color); `level` is the brightness slider on top of it.
+    @Published var hue: Double = 0.072 { didSet { apply(); saveSelection() } }
+    @Published var saturation: Double = 1 { didSet { apply(); saveSelection() } }
+    @Published var value: Double = 1 { didSet { apply(); saveSelection() } }
+    @Published var level: Double = 1 { didSet { apply(); saveSelection() } }
     @Published var speed: Int = 1 { didSet { apply() } }
-    @Published var sceneInterval: Double = 5 { didSet { restartScenes() } }
+    @Published var sceneInterval: Double = 5 { didSet { restartScenes(); saveSelection() } }
     @Published private(set) var sceneIndex = 0
 
     let swatches = Swatch.all
@@ -147,7 +224,7 @@ final class LightController: ObservableObject {
             let s = swatches[sceneIndex % swatches.count]
             return (s.red, s.green, s.blue)
         }
-        return HSV(h: hue, s: saturation, v: 1).rgb
+        return HSV(h: hue, s: saturation, v: value).rgb
     }
 
     var color: Color {
@@ -181,49 +258,125 @@ final class LightController: ObservableObject {
         let hsv = HSV(r: swatch.red, g: swatch.green, b: swatch.blue)
         hue = hsv.h
         saturation = hsv.s
+        value = hsv.v
     }
 
-    func restoreFactory() {
-        device.sendNow(MSIDevice.factory)
+    /// The color wheel picks hue and saturation at full depth.
+    func beginCustomColor() {
+        value = 1
+    }
+
+    func restore() {
+        guard let reference = device.reference else { return }
+        device.sendNow(reference)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.syncFromDevice() }
+    }
+
+    func allowWrites() {
+        UserDefaults.standard.set(true, forKey: consentKey)
+        writesAllowed = true
+        askingToWrite = false
+        apply()
+    }
+
+    func declineWrites() {
+        askingToWrite = false
+        syncFromDevice()
     }
 
     // MARK: Device
 
+    private var consentKey: String { "allowWrites.\(monitor.name)" }
+
     private func connectionChanged(_ isConnected: Bool) {
         connected = isConnected
-        if isConnected {
-            let name = (device.productName ?? "MSI Monitor").replacingOccurrences(of: "MSI Monitor ", with: "")
-            monitor = MonitorModel.lookup(name)
-            syncFromDevice()
-        } else {
+        guard isConnected else {
             sceneTimer?.invalidate()
+            return
         }
+
+        let name = (device.productName ?? "MSI Monitor").replacingOccurrences(of: "MSI Monitor ", with: "")
+        monitor = MonitorModel.lookup(name)
+        lightingSupported = device.layout != nil
+        writesAllowed = monitor.verified || UserDefaults.standard.bool(forKey: consentKey)
+
+        if let factory = monitor.factory, factory.count == device.readRaw()?.count {
+            device.reference = factory
+        } else if let saved = OriginalLighting.load(model: name, serial: device.serialNumber),
+                  saved.count == device.readRaw()?.count {
+            device.reference = saved
+        } else if let current = device.readRaw() {
+            OriginalLighting.save(current, model: name, serial: device.serialNumber)
+            device.reference = current
+        }
+        syncFromDevice()
     }
 
+    /// Pull the monitor's current lighting into the UI. The monitor only stores what it is
+    /// showing right now, so choices it can't express (the Color pick while Spectrum or
+    /// Scenes is running, the Scenes sequence itself) come from the saved selection.
     private func syncFromDevice() {
         guard let state = device.readState() else { return }
+        let saved = Selection.load(for: monitor.name)
         isSyncing = true
-        defer { isSyncing = false }
+
+        if let saved {
+            lastColorMode = LightMode(rawValue: saved.colorMode) ?? .solid
+            lastSpectrumMode = LightMode(rawValue: saved.spectrumMode) ?? .ambient
+            sceneInterval = saved.sceneInterval
+        }
 
         power = state.mode != 0
-        if let m = LightMode(hardwareMode: state.mode) {
+        if var m = LightMode(hardwareMode: state.mode) {
+            if m == .solid, saved?.inScenes == true { m = .scenes }
             mode = m
-            if m.category == .color { lastColorMode = m }
-            if m.category == .spectrum { lastSpectrumMode = m }
         }
 
-        let hsv = HSV(r: Double(state.red) / 255, g: Double(state.green) / 255, b: Double(state.blue) / 255)
-        if hsv.v > 0 {
-            hue = hsv.h
-            saturation = hsv.s
+        let shownRGB = (Double(state.red) / 255, Double(state.green) / 255, Double(state.blue) / 255)
+        let shown = HSV(r: shownRGB.0, g: shownRGB.1, b: shownRGB.2)
+
+        // The saved selection is trusted unless the monitor is in a color mode showing
+        // something else (changed from the OSD or another app).
+        let savedStillShowing = saved.map { s -> Bool in
+            let base = HSV(h: s.hue, s: s.saturation, v: s.value ?? 1).rgb
+            let l = s.level ?? 1
+            return abs(base.0 * l - shownRGB.0) < 0.02 && abs(base.1 * l - shownRGB.1) < 0.02
+                && abs(base.2 * l - shownRGB.2) < 0.02
+        } ?? false
+
+        if let saved, mode.category != .color || savedStillShowing {
+            hue = saved.hue
+            saturation = saved.saturation
+            value = saved.value ?? 1
+            level = saved.level ?? 1
+        } else if shown.v > 0 {
+            hue = shown.h
+            saturation = shown.s
+            value = 1
+            level = max(0.05, shown.v)
         }
-        level = mode == .solid ? max(0.05, hsv.v) : max(0.05, Double(state.brightness) / 100)
+        if mode.isSpectrum { level = max(0.05, Double(state.brightness) / 100) }
         speed = Int(min(state.speed, 2))
+
+        isSyncing = false
+        restartScenes()
+    }
+
+    private func saveSelection() {
+        guard connected, !isSyncing else { return }
+        Selection(hue: hue, saturation: saturation, value: value, level: level,
+                  sceneInterval: sceneInterval,
+                  colorMode: lastColorMode.rawValue, spectrumMode: lastSpectrumMode.rawValue,
+                  inScenes: mode == .scenes)
+            .save(for: monitor.name)
     }
 
     private func apply() {
-        guard connected, !isSyncing else { return }
+        guard connected, lightingSupported, !isSyncing else { return }
+        guard writesAllowed else {
+            askingToWrite = true
+            return
+        }
         guard power else {
             device.send(.init(mode: 0, red: 0, green: 0, blue: 0, speed: 0, brightness: 0))
             return

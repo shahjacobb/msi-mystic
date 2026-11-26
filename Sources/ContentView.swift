@@ -5,7 +5,7 @@ struct ContentView: View {
     @EnvironmentObject private var light: LightController
     @State private var editingColor = false
 
-    private var controlsEnabled: Bool { light.connected && light.power }
+    private var controlsEnabled: Bool { light.connected && light.lightingSupported && light.power }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -45,18 +45,30 @@ struct ContentView: View {
         }
         .background(Color.black)
         .animation(.smooth(duration: 0.3), value: light.power)
+        .alert("Allow lighting changes on this monitor?", isPresented: $light.askingToWrite) {
+            Button("Allow") { light.allowWrites() }
+            Button("Cancel", role: .cancel) { light.declineWrites() }
+        } message: {
+            Text("\(light.monitor.name) hasn't been tested with Mystic yet. Its current lighting is saved, so Restore Original Lighting can put it back.")
+        }
     }
 
     private var deviceHeader: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(light.connected ? light.monitor.name : "Not Connected")
+            Text(light.connected ? light.monitor.name : "No Monitor")
                 .font(.system(size: 22, weight: .semibold).width(.expanded))
-            Text(light.connected
-                 ? "\(light.monitor.summary), connected over USB"
-                 : "Connect the monitor's USB-B upstream cable to this Mac.")
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.5))
+            if let note = statusNote {
+                Text(note)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
         }
+    }
+
+    private var statusNote: String? {
+        if !light.connected { return "Connect the monitor's USB-B upstream cable to this Mac." }
+        if !light.lightingSupported { return "This monitor doesn't expose lighting control." }
+        return nil
     }
 
     @ViewBuilder
@@ -122,7 +134,8 @@ struct ContentView: View {
                   editingCustom: $editingColor,
                   hue: $light.hue,
                   saturation: $light.saturation,
-                  select: light.select)
+                  select: light.select,
+                  onCustom: light.beginCustomColor)
     }
 
     private var footer: some View {
@@ -131,9 +144,10 @@ struct ContentView: View {
                 Link("Product Page", destination: page)
             }
             Spacer()
-            Button("Restore Factory Lighting", action: light.restoreFactory)
+            Button(light.hasFactoryData ? "Restore Factory Lighting" : "Restore Original Lighting",
+                   action: light.restore)
                 .buttonStyle(.plain)
-                .disabled(!light.connected)
+                .disabled(!light.connected || !light.lightingSupported)
         }
         .font(.system(size: 11))
         .foregroundStyle(.white.opacity(0.35))
@@ -368,6 +382,7 @@ struct SwatchRow: View {
     @Binding var hue: Double
     @Binding var saturation: Double
     let select: (Swatch) -> Void
+    let onCustom: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -381,7 +396,7 @@ struct SwatchRow: View {
                 .frame(maxWidth: .infinity)
             }
             if allowsCustom {
-                Button { editingCustom = true } label: {
+                Button { onCustom(); editingCustom = true } label: {
                     Dot(isActive: active == nil) {
                         Circle().fill(AngularGradient(colors: (0...12).map {
                             Color(hue: Double($0) / 12, saturation: 0.85, brightness: 1)
