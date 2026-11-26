@@ -5,98 +5,139 @@ struct ContentView: View {
     @EnvironmentObject private var light: LightController
     @State private var editingColor = false
 
+    private var controlsEnabled: Bool { light.connected && light.power }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                BrandMark(resource: "msi-logo").frame(height: 15)
-                Spacer()
-                Toggle("Power", isOn: $light.power)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .disabled(!light.connected)
-            }
-            .padding(.top, 40)
-
-            MonitorView(mode: light.mode, color: light.color, level: light.level, speed: light.speed,
-                        lit: light.connected && light.power, connected: light.connected)
-                .frame(maxWidth: .infinity)
-                .frame(height: 230)
-                .padding(.top, 12)
-
-            Text(light.title)
-                .font(.system(size: 30, weight: .semibold).width(.expanded))
-                .contentTransition(.opacity)
-                .padding(.top, 14)
-
-            if !light.connected {
-                Text("Connect the monitor's USB-B cable to this Mac.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .padding(.top, 6)
-            }
-
-            ModeTabs(selection: $light.mode)
-                .padding(.top, 22)
-
-            VStack(alignment: .leading, spacing: 26) {
-                if light.mode.usesColor || light.mode == .scenes {
-                    Section(light.mode == .scenes ? "Sequence" : "Color") {
-                        SwatchRow(swatches: light.swatches,
-                                  active: light.activeSwatch,
-                                  allowsCustom: light.mode != .scenes,
-                                  editingCustom: $editingColor,
-                                  hue: $light.hue,
-                                  saturation: $light.saturation,
-                                  select: light.select)
-                    }
-                }
-
-                if light.mode == .scenes {
-                    Section("Interval", value: "\(Int(light.sceneInterval)) s") {
-                        LineSlider(value: $light.sceneInterval, range: 1...10, step: 1, tint: .white)
-                    }
-                }
-
-                Section("Brightness", value: "\(Int((light.level * 100).rounded()))%") {
-                    LineSlider(value: $light.level, range: 0.05...1, step: 0,
-                               tint: light.mode.isSpectrum ? .white : light.color)
-                }
-
-                if light.mode.usesSpeed {
-                    Section("Speed") {
-                        Picker("Speed", selection: $light.speed) {
-                            Text("Slow").tag(0)
-                            Text("Medium").tag(1)
-                            Text("Fast").tag(2)
-                        }
-                        .pickerStyle(.segmented)
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    BrandMark(resource: "msi-wordmark-2020").frame(height: 17)
+                    Spacer()
+                    Toggle("Lighting", isOn: $light.power)
+                        .toggleStyle(.switch)
                         .labelsHidden()
+                        .disabled(!light.connected)
+                }
+                .padding(.top, 40)
+
+                MonitorHero(model: light.monitor, mode: light.mode, color: light.color,
+                            level: light.level, speed: light.speed,
+                            lit: controlsEnabled, connected: light.connected)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 262)
+                    .padding(.top, 10)
+
+                deviceHeader.padding(.top, 18)
+
+                TabStrip(selection: $light.category)
+                    .animation(.smooth(duration: 0.25), value: light.category)
+                    .padding(.top, 22)
+
+                controls
+                    .padding(.top, 24)
+                    .disabled(!controlsEnabled)
+                    .opacity(controlsEnabled ? 1 : 0.3)
+
+                footer.padding(.top, 34)
+            }
+            .padding(.horizontal, 26)
+            .padding(.bottom, 18)
+        }
+        .background(Color.black)
+        .animation(.smooth(duration: 0.3), value: light.power)
+    }
+
+    private var deviceHeader: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(light.connected ? light.monitor.name : "Not Connected")
+                .font(.system(size: 22, weight: .semibold).width(.expanded))
+            Text(light.connected
+                 ? "\(light.monitor.summary), connected over USB"
+                 : "Connect the monitor's USB-B upstream cable to this Mac.")
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.5))
+        }
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 26) {
+            switch light.category {
+            case .color:
+                Section("Color", value: light.colorName) {
+                    swatches(allowsCustom: true)
+                }
+                Section("Effect") {
+                    Picker("Effect", selection: $light.mode) {
+                        Text("Steady").tag(LightMode.solid)
+                        Text("Breathe").tag(LightMode.breathe)
+                        Text("Flash").tag(LightMode.flash)
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+            case .spectrum:
+                Section("Style") {
+                    Picker("Style", selection: $light.mode) {
+                        Text("Ambient").tag(LightMode.ambient)
+                        Text("Rainbow").tag(LightMode.rainbow)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+            case .scenes:
+                Section("Sequence", value: light.colorName) {
+                    swatches(allowsCustom: false)
+                }
+                Section("Hold each color", value: "\(Int(light.sceneInterval)) s") {
+                    LineSlider(value: $light.sceneInterval, range: 1...10, step: 1, tint: .white)
                 }
             }
-            .padding(.top, 24)
-            .disabled(!light.connected || !light.power)
-            .opacity(light.connected && light.power ? 1 : 0.3)
 
-            Spacer(minLength: 20)
-
-            HStack {
-                Text(light.connected ? light.monitorName : "")
-                Spacer()
-                Button("Restore Factory Lighting", action: light.restoreFactory)
-                    .buttonStyle(.plain)
-                    .disabled(!light.connected)
+            Section("Brightness", value: "\(Int((light.level * 100).rounded()))%") {
+                LineSlider(value: $light.level, range: 0.05...1, step: 0,
+                           tint: light.mode.isSpectrum ? .white : light.color)
             }
-            .font(.system(size: 11))
-            .foregroundStyle(.white.opacity(0.32))
+
+            if light.mode.usesSpeed {
+                Section("Speed") {
+                    Picker("Speed", selection: $light.speed) {
+                        Text("Slow").tag(0)
+                        Text("Medium").tag(1)
+                        Text("Fast").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+            }
         }
-        .padding(.horizontal, 26)
-        .padding(.bottom, 18)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color.black)
-        .animation(.smooth(duration: 0.3), value: light.mode)
-        .animation(.smooth(duration: 0.3), value: light.power)
-        .animation(.smooth(duration: 0.5), value: light.sceneIndex)
+    }
+
+    private func swatches(allowsCustom: Bool) -> some View {
+        SwatchRow(swatches: light.swatches,
+                  active: light.activeSwatch,
+                  allowsCustom: allowsCustom,
+                  editingCustom: $editingColor,
+                  hue: $light.hue,
+                  saturation: $light.saturation,
+                  select: light.select)
+    }
+
+    private var footer: some View {
+        HStack {
+            if let page = light.monitor.productPage, light.connected {
+                Link("Product Page", destination: page)
+            }
+            Spacer()
+            Button("Restore Factory Lighting", action: light.restoreFactory)
+                .buttonStyle(.plain)
+                .disabled(!light.connected)
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(.white.opacity(0.35))
+        .tint(.white.opacity(0.35))
     }
 }
 
@@ -123,6 +164,7 @@ private struct Section<Content: View>: View {
                     Text(value)
                         .monospacedDigit()
                         .foregroundStyle(.white.opacity(0.85))
+                        .contentTransition(.opacity)
                 }
             }
             .font(.system(size: 12, weight: .medium))
@@ -137,22 +179,22 @@ struct BrandMark: View {
     let resource: String
 
     var body: some View {
-        if let url = Bundle.main.url(forResource: resource, withExtension: "png"),
-           let image = NSImage(contentsOf: url) {
+        if let image = Bundle.main.url(forResource: resource, withExtension: "png").flatMap(NSImage.init(contentsOf:)) {
             Image(nsImage: image)
                 .renderingMode(.template)
                 .resizable()
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
         } else {
-            Text("msi").font(.system(size: 16, weight: .heavy)).italic()
+            Text("MSI").font(.system(size: 14, weight: .heavy))
         }
     }
 }
 
-// MARK: - Monitor
+// MARK: - Hero
 
-struct MonitorView: View {
+struct MonitorHero: View {
+    let model: MonitorModel
     let mode: LightMode
     let color: Color
     let level: Double
@@ -161,117 +203,142 @@ struct MonitorView: View {
     let connected: Bool
 
     private static let spectrum: [Color] = stride(from: 0.0, through: 1.0, by: 1.0 / 12).map {
-        Color(hue: $0, saturation: 0.95, brightness: 1)
+        Color(hue: $0, saturation: 0.9, brightness: 1)
     }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 60, paused: !lit || !mode.isAnimated)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            ZStack {
-                Ellipse()
-                    .fill(glow(t))
-                    .frame(width: 320, height: 170)
-                    .blur(radius: 38)
-                    .offset(y: -14)
-                    .opacity(lit ? (0.3 + 0.7 * level) * pulse(t) : 0)
+            let light = lightStyle(t)
+            let intensity = lit ? (0.35 + 0.65 * level) * pulse(t) : 0
 
-                Monitor()
-                    .opacity(connected ? 1 : 0.45)
+            Group {
+                if let photo = model.rearPhoto, let rear = RearPhoto(resource: photo) {
+                    rear.body(light: light, intensity: intensity)
+                } else {
+                    DrawnMonitor(light: light, intensity: intensity)
+                }
             }
         }
+        .opacity(connected ? 1 : 0.4)
     }
 
     private var rate: Double { [0.6, 1.0, 1.8][min(max(speed, 0), 2)] }
 
-    private func glow(_ t: Double) -> AnyShapeStyle {
-        if mode.isSpectrum {
-            return AnyShapeStyle(AngularGradient(colors: Self.spectrum, center: .center,
-                                                 angle: .degrees(t * 36 * rate)))
+    /// What the LEDs are showing at time t.
+    private func lightStyle(_ t: Double) -> AnyShapeStyle {
+        switch mode {
+        case .rainbow:
+            AnyShapeStyle(AngularGradient(colors: Self.spectrum, center: UnitPoint(x: 0.5, y: 0.33),
+                                          angle: .degrees(t * 50 * rate)))
+        case .ambient:
+            AnyShapeStyle(Color(hue: (t * 0.06 * rate).truncatingRemainder(dividingBy: 1),
+                                saturation: 0.9, brightness: 1))
+        default:
+            AnyShapeStyle(color)
         }
-        return AnyShapeStyle(color)
     }
 
     private func pulse(_ t: Double) -> Double {
         switch mode {
-        case .breathe: 0.15 + 0.85 * (0.5 + 0.5 * sin(t * 2 * rate))
+        case .breathe: 0.12 + 0.88 * (0.5 + 0.5 * sin(t * 2 * rate))
         case .flash: sin(t * 6 * rate) > 0 ? 1 : 0
         default: 1
         }
     }
 }
 
-/// Front view of a 27" white MSI MPG monitor.
-private struct Monitor: View {
+/// MSI's product photo of the monitor's rear, with the LED dots split into a separate mask
+/// so they can be lit in the current color.
+private struct RearPhoto {
+    let base: NSImage
+    let leds: NSImage
+
+    init?(resource: String) {
+        guard let baseURL = Bundle.main.url(forResource: resource, withExtension: "png"),
+              let ledURL = Bundle.main.url(forResource: resource + "-leds", withExtension: "png"),
+              let base = NSImage(contentsOf: baseURL),
+              let leds = NSImage(contentsOf: ledURL) else { return nil }
+        self.base = base
+        self.leds = leds
+    }
+
+    func body(light: AnyShapeStyle, intensity: Double) -> some View {
+        let aspect = base.size.width / base.size.height
+        return ZStack {
+            Image(nsImage: base).resizable().interpolation(.high)
+            ledLayer(light).opacity(intensity)
+            ledLayer(light).blur(radius: 6).blendMode(.plusLighter).opacity(0.8 * intensity)
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .background {
+            GeometryReader { geo in
+                Ellipse()
+                    .fill(light)
+                    .frame(width: geo.size.width * 1.25, height: geo.size.height * 0.62)
+                    .position(x: geo.size.width / 2, y: geo.size.height * 0.33)
+                    .blur(radius: 44)
+                    .opacity(0.55 * intensity)
+            }
+        }
+    }
+
+    private func ledLayer(_ light: AnyShapeStyle) -> some View {
+        Rectangle()
+            .fill(light)
+            .mask(Image(nsImage: leds).resizable().interpolation(.high))
+    }
+}
+
+/// Fallback for MSI monitors without a product photo.
+private struct DrawnMonitor: View {
+    let light: AnyShapeStyle
+    let intensity: Double
+
     private let shell = LinearGradient(colors: [Color(white: 0.95), Color(white: 0.80)],
                                        startPoint: .top, endPoint: .bottom)
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(shell)
-                VStack(spacing: 0) {
+        ZStack {
+            Ellipse()
+                .fill(light)
+                .frame(width: 320, height: 170)
+                .blur(radius: 38)
+                .offset(y: -14)
+                .opacity(intensity)
+
+            VStack(spacing: 0) {
+                ZStack(alignment: .bottom) {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous).fill(shell)
                     RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                        .fill(LinearGradient(colors: [Color(white: 0.11), Color(white: 0.03)],
-                                             startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .overlay(
-                            LinearGradient(stops: [.init(color: .white.opacity(0.07), location: 0),
-                                                   .init(color: .clear, location: 0.45)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                                .clipShape(RoundedRectangle(cornerRadius: 2.5, style: .continuous))
-                        )
+                        .fill(Color(white: 0.06))
                         .padding([.top, .horizontal], 3)
-                    BrandMark(resource: "msi-wordmark-2020")
-                        .foregroundStyle(Color(white: 0.45))
-                        .frame(height: 4)
-                        .frame(height: 11)
+                        .padding(.bottom, 11)
                 }
+                .frame(width: 250, height: 150)
+                Rectangle().fill(Color(white: 0.82)).frame(width: 26, height: 34)
+                Capsule().fill(Color(white: 0.85)).frame(width: 118, height: 7)
             }
-            .frame(width: 250, height: 150)
-            .shadow(color: .black.opacity(0.5), radius: 10, y: 6)
-
-            Trapezoid(inset: 3)
-                .fill(LinearGradient(colors: [Color(white: 0.72), Color(white: 0.88)],
-                                     startPoint: .top, endPoint: .bottom))
-                .frame(width: 28, height: 34)
-
-            Capsule()
-                .fill(LinearGradient(colors: [Color(white: 0.92), Color(white: 0.74)],
-                                     startPoint: .top, endPoint: .bottom))
-                .frame(width: 118, height: 7)
         }
     }
 }
 
-private struct Trapezoid: Shape {
-    let inset: CGFloat
+// MARK: - Tabs
 
-    func path(in rect: CGRect) -> Path {
-        Path { p in
-            p.move(to: CGPoint(x: rect.minX + inset, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.maxX - inset, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-            p.closeSubpath()
-        }
-    }
-}
-
-// MARK: - Modes
-
-struct ModeTabs: View {
-    @Binding var selection: LightMode
+struct TabStrip: View {
+    @Binding var selection: LightingCategory
     @Namespace private var underline
 
     var body: some View {
         ZStack(alignment: .bottom) {
             Rectangle().fill(.white.opacity(0.1)).frame(height: 1)
             HStack(spacing: 0) {
-                ForEach(LightMode.allCases) { mode in
-                    let selected = mode == selection
-                    Button { selection = mode } label: {
+                ForEach(LightingCategory.allCases) { item in
+                    let selected = item == selection
+                    Button { selection = item } label: {
                         VStack(spacing: 10) {
-                            Text(mode.rawValue)
-                                .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                            Text(item.rawValue)
+                                .font(.system(size: 13, weight: selected ? .semibold : .regular))
                                 .foregroundStyle(.white.opacity(selected ? 1 : 0.42))
                             ZStack {
                                 Rectangle().fill(.clear).frame(height: 2)
@@ -305,23 +372,25 @@ struct SwatchRow: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach(swatches) { swatch in
-                Dot(isActive: swatch == active) { Circle().fill(swatch.color) }
-                    .onTapGesture { select(swatch) }
-                    .help(swatch.name)
-                    .accessibilityLabel(swatch.name)
-                    .accessibilityAddTraits(.isButton)
-                    .frame(maxWidth: .infinity)
+                Button { select(swatch) } label: {
+                    Dot(isActive: swatch == active) { Circle().fill(swatch.color) }
+                }
+                .buttonStyle(.plain)
+                .help(swatch.name)
+                .accessibilityLabel(swatch.name)
+                .frame(maxWidth: .infinity)
             }
             if allowsCustom {
-                Dot(isActive: active == nil) {
-                    Circle().fill(AngularGradient(colors: (0...12).map {
-                        Color(hue: Double($0) / 12, saturation: 0.85, brightness: 1)
-                    }, center: .center))
+                Button { editingCustom = true } label: {
+                    Dot(isActive: active == nil) {
+                        Circle().fill(AngularGradient(colors: (0...12).map {
+                            Color(hue: Double($0) / 12, saturation: 0.85, brightness: 1)
+                        }, center: .center))
+                    }
                 }
-                .onTapGesture { editingCustom = true }
+                .buttonStyle(.plain)
                 .help("Custom")
                 .accessibilityLabel("Custom color")
-                .accessibilityAddTraits(.isButton)
                 .frame(maxWidth: .infinity)
                 .popover(isPresented: $editingCustom, arrowEdge: .bottom) {
                     ColorWheel(hue: $hue, saturation: $saturation)

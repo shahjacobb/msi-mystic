@@ -1,7 +1,14 @@
 import SwiftUI
 
+enum LightingCategory: String, CaseIterable, Identifiable {
+    case color = "Color"
+    case spectrum = "Spectrum"
+    case scenes = "Scenes"
+    var id: Self { self }
+}
+
 enum LightMode: String, CaseIterable, Identifiable {
-    case solid = "Solid"
+    case solid = "Steady"
     case breathe = "Breathe"
     case flash = "Flash"
     case ambient = "Ambient"
@@ -25,6 +32,14 @@ enum LightMode: String, CaseIterable, Identifiable {
     var usesSpeed: Bool { self == .breathe || self == .flash || self == .ambient || self == .rainbow }
     var isAnimated: Bool { self != .solid && self != .scenes }
     var isSpectrum: Bool { self == .ambient || self == .rainbow }
+
+    var category: LightingCategory {
+        switch self {
+        case .solid, .breathe, .flash: .color
+        case .ambient, .rainbow: .spectrum
+        case .scenes: .scenes
+        }
+    }
 
     init?(hardwareMode: UInt8) {
         switch hardwareMode {
@@ -59,12 +74,53 @@ struct Swatch: Identifiable, Hashable {
     ]
 }
 
+struct MonitorModel {
+    let name: String
+    let summary: String
+    let productPage: URL?
+    /// Base name of a rear photo plus LED mask in Resources, if one exists for this model.
+    let rearPhoto: String?
+
+    static func lookup(_ name: String) -> MonitorModel {
+        switch name {
+        case "MPG 274URDFW E16M":
+            return MonitorModel(name: name, summary: "27-inch 4K Mini LED",
+                                productPage: URL(string: "https://www.msi.com/Monitor/MPG-274URDFW-E16M"),
+                                rearPhoto: "mpg274urdfw-rear")
+        default:
+            return MonitorModel(name: name, summary: "MSI monitor", productPage: nil, rearPhoto: nil)
+        }
+    }
+}
+
 final class LightController: ObservableObject {
     @Published private(set) var connected = false
-    @Published private(set) var monitorName = "MSI Monitor"
+    @Published private(set) var monitor = MonitorModel.lookup("")
 
     @Published var power = true { didSet { restartScenes(); apply() } }
-    @Published var mode: LightMode = .solid { didSet { restartScenes(); apply() } }
+    @Published var mode: LightMode = .solid {
+        didSet {
+            if mode.category == .color { lastColorMode = mode }
+            if mode.category == .spectrum { lastSpectrumMode = mode }
+            restartScenes()
+            apply()
+        }
+    }
+
+    private var lastColorMode: LightMode = .solid
+    private var lastSpectrumMode: LightMode = .ambient
+
+    var category: LightingCategory {
+        get { mode.category }
+        set {
+            guard newValue != mode.category else { return }
+            switch newValue {
+            case .color: mode = lastColorMode
+            case .spectrum: mode = lastSpectrumMode
+            case .scenes: mode = .scenes
+            }
+        }
+    }
     @Published var hue: Double = 0.072 { didSet { apply() } }
     @Published var saturation: Double = 1 { didSet { apply() } }
     @Published var level: Double = 1 { didSet { apply() } }
@@ -105,12 +161,7 @@ final class LightController: ObservableObject {
         return swatches.first { abs($0.red - r) < 0.02 && abs($0.green - g) < 0.02 && abs($0.blue - b) < 0.02 }
     }
 
-    var title: String {
-        guard connected else { return "No Monitor" }
-        guard power else { return "Off" }
-        if mode.isSpectrum { return mode.rawValue }
-        return activeSwatch?.name ?? "Custom"
-    }
+    var colorName: String { activeSwatch?.name ?? "Custom" }
 
     var hex: String {
         let (r, g, b) = baseRGB
@@ -142,7 +193,8 @@ final class LightController: ObservableObject {
     private func connectionChanged(_ isConnected: Bool) {
         connected = isConnected
         if isConnected {
-            monitorName = (device.productName ?? "MSI Monitor").replacingOccurrences(of: "MSI Monitor ", with: "")
+            let name = (device.productName ?? "MSI Monitor").replacingOccurrences(of: "MSI Monitor ", with: "")
+            monitor = MonitorModel.lookup(name)
             syncFromDevice()
         } else {
             sceneTimer?.invalidate()
@@ -155,7 +207,11 @@ final class LightController: ObservableObject {
         defer { isSyncing = false }
 
         power = state.mode != 0
-        if let m = LightMode(hardwareMode: state.mode) { mode = m }
+        if let m = LightMode(hardwareMode: state.mode) {
+            mode = m
+            if m.category == .color { lastColorMode = m }
+            if m.category == .spectrum { lastSpectrumMode = m }
+        }
 
         let hsv = HSV(r: Double(state.red) / 255, g: Double(state.green) / 255, b: Double(state.blue) / 255)
         if hsv.v > 0 {
